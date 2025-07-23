@@ -11,17 +11,17 @@ This FastAPI project connects to a mailbox using Microsoft Graph API, processes 
 MAIL-CLASSIFICATION-API/
 │
 ├── utils/
-│ ├── auth.py # Handles Azure AD authentication
-│ ├── classify.py # Rule-based classification logic (category & priority)
-│ ├── dataverse.py # Dataverse API push logic
-│ └── extract_attachments.py # Extracts text from attachments and body
+│ ├── auth.py                   # Handles Azure AD authentication
+│ ├── classify.py               # Rule-based classification logic (category & priority)
+│ ├── dataverse.py              # Dataverse API push logic
+│ └── extract_attachments.py    # Extracts text from attachments and body
 │
-├── .env # Environment variables (not committed)
-├── Dockerfile # Docker configuration
-├── main.py # FastAPI app entry point
-├── requirements.txt # Python dependencies
-├── run_mail_api.bat # One-click script to rebuild and run the API
-└── readme.md # 📖 You're reading this!
+├── .env                        # Environment variables (not committed)
+├── Dockerfile                  # Docker configuration
+├── main.py                     # FastAPI app entry point
+├── requirements.txt            # Python dependencies
+├── run_mail_api.bat            # One-click script to rebuild and run the API
+└── readme.md                   # 📖 You're reading this!
 ```
 
 ---

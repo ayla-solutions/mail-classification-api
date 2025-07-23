@@ -9,7 +9,7 @@ The API is hosted in Azure client and is connected to this GitHub repo. Everytim
 
 - To check if the API is running: [text](https://mail-classification-api.azurewebsites.net/)
 - To make a GET call (automatically fetch the emails): [text](https://mail-classification-api.azurewebsites.net/mails)
-- For the interactive FAST API interface: 
+- For the interactive FAST API interface: [text](https://mail-classification-api.azurewebsites.net/docs)
 
 ---
 

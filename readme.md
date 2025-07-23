@@ -1,0 +1,79 @@
+# Outlook Mail Classifier API
+
+This FastAPI project connects to a mailbox using Microsoft Graph API, processes emails and attachments, classifies them, and pushes structured data into a Dataverse table.
+
+---
+
+## 📁 Project Structure
+
+MAIL-CLASSIFICATION-API/
+│
+├── utils/
+│ ├── auth.py # Handles Azure AD authentication
+│ ├── classify.py # Rule-based classification logic (category & priority)
+│ ├── dataverse.py # Dataverse API push logic
+│ └── extract_attachments.py # Extracts text from attachments and body
+│
+├── .env # Environment variables (not committed)
+├── Dockerfile # Docker configuration
+├── main.py # FastAPI app entry point
+├── requirements.txt # Python dependencies
+├── run_mail_api.bat # One-click script to rebuild and run the API
+└── readme.md # 📖 You're reading this!
+
+---
+
+## ⚙️ Setup Instructions
+
+### 1. Clone the Repo (If not already)
+```bash
+git clone <repo-url>
+cd <project-folder>
+
+
+### 2. Install dependencies
+pip install -r requirements.txt
+
+### 3. Dockerized Deployment
+
+#### Local Setup
+
+##### To Run the Docker Locally
+
+```css
+docker stop mail-api
+docker rm mail-api
+docker build -t mail-api .
+docker run -d --name mail-api -p 8000:8000 --env-file .env mail-api
+```
+
+OR
+
+Run:
+
+```
+run_mail_api.bat // In Windows
+```
+
+#### To Check the logs
+
+```
+docker logs -f mail-api
+```
+
+#### To Test the API
+
+```
+// To see if the API is Running...
+http://localhost:8000
+```
+
+```
+// Simple GET request
+http://localhost:8000/mails
+```
+
+```
+// Interactive API Test Page
+http://localhost:8000/docs
+```

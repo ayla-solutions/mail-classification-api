@@ -84,10 +84,7 @@ http://localhost:8000/docs
 ```
 
 ### Notes
-The Dataverse table name used in the API payload should exactly match schema names like:
-
-crabb_sender, crabb_subject, crabb_attachment_names, etc.
-
-The table must be created in Power Apps and accessible to the registered app.
-
-If you are not seeing changes, check whether the Application User has permissions to that table.
+- The Dataverse table name used in the API payload should exactly match schema names like:
+    crabb_sender, crabb_subject, crabb_attachment_names, etc.
+- The table must be created in Power Apps and accessible to the registered app.
+- If you are not seeing changes, check whether the Application User has permissions to that table.

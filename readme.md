@@ -6,6 +6,8 @@ This FastAPI project connects to a mailbox using Microsoft Graph API, processes 
 
 ## 📁 Project Structure
 
+```
+
 MAIL-CLASSIFICATION-API/
 │
 ├── utils/
@@ -20,6 +22,7 @@ MAIL-CLASSIFICATION-API/
 ├── requirements.txt # Python dependencies
 ├── run_mail_api.bat # One-click script to rebuild and run the API
 └── readme.md # 📖 You're reading this!
+```
 
 ---
 
@@ -29,10 +32,12 @@ MAIL-CLASSIFICATION-API/
 ```bash
 git clone <repo-url>
 cd <project-folder>
-
+```
 
 ### 2. Install dependencies
+```
 pip install -r requirements.txt
+```
 
 ### 3. Dockerized Deployment
 
@@ -40,7 +45,7 @@ pip install -r requirements.txt
 
 ##### To Run the Docker Locally
 
-```css
+```
 docker stop mail-api
 docker rm mail-api
 docker build -t mail-api .
@@ -63,17 +68,26 @@ docker logs -f mail-api
 
 #### To Test the API
 
+###### To see if the API is Running...
 ```
-// To see if the API is Running...
 http://localhost:8000
 ```
 
+###### Simple GET request
 ```
-// Simple GET request
 http://localhost:8000/mails
 ```
 
+###### Interactive API Test Page
 ```
-// Interactive API Test Page
 http://localhost:8000/docs
 ```
+
+### Notes
+The Dataverse table name used in the API payload should exactly match schema names like:
+
+crabb_sender, crabb_subject, crabb_attachment_names, etc.
+
+The table must be created in Power Apps and accessible to the registered app.
+
+If you are not seeing changes, check whether the Application User has permissions to that table.

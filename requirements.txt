@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+apscheduler
+msal
+pandas
+requests
+python-dotenv
+PyPDF2
+python-docx
+openpyxl

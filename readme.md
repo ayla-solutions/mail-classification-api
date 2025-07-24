@@ -7,8 +7,8 @@ The API is hosted in Azure client and is connected to this GitHub repo. Everytim
 ## API access Links
 
 - To check if the API is running: [`https://mail-classification-api.azurewebsites.net/`](https://mail-classification-api.azurewebsites.net/)
-- To make a GET call (automatically fetch the emails): https://mail-classification-api.azurewebsites.net/mails
-- For the interactive FAST API interface: https://mail-classification-api.azurewebsites.net/docs
+- To make a GET call (automatically fetch the emails): [`https://mail-classification-api.azurewebsites.net/mails`](https://mail-classification-api.azurewebsites.net/mails)
+- For the interactive FAST API interface: [`https://mail-classification-api.azurewebsites.net/docs`](https://mail-classification-api.azurewebsites.net/docs)
 
 ---
 

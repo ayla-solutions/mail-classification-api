@@ -24,7 +24,7 @@ MAIL-CLASSIFICATION-API/
 │ ├── dataverse.py              # Dataverse API push logic
 │ └── extract_attachments.py    # Extracts text from attachments and body
 │
-├── .env                        # Environment variables (not committed)
+├── .env                        # Environment variables 
 ├── Dockerfile                  # Docker configuration
 ├── main.py                     # FastAPI app entry point
 ├── requirements.txt            # Python dependencies
@@ -34,12 +34,60 @@ MAIL-CLASSIFICATION-API/
 
 ---
 
+## Functionality
+
+#### 📂 utils/
+- **auth.py**  
+  Handles Azure Active Directory (AD) authentication to obtain and refresh access tokens for Microsoft Graph or Dataverse API.
+
+- **classify.py**  
+  Contains rule-based classification logic for assigning categories and priorities to incoming emails based on subject, body, and other metadata.
+
+- **dataverse.py**  
+  Responsible for formatting and sending HTTP POST requests to the Dataverse API to store classified email information into a specified table.
+
+- **extract_attachments.py**  
+  Parses email content and attachments. Extracts readable text from supported file types and prepares it for downstream processing.
+
+---
+
+#### 📄 .env  
+Environment variables file used to store sensitive data like client credentials, tenant ID, table name, and API URLs. 
+
+#### 📄 Dockerfile  
+Defines the Docker environment and instructions to containerize the FastAPI application for deployment.
+
+#### 📄 main.py  
+The entry point of the FastAPI app. Starts the server and orchestrates the email classification and Dataverse push workflow.
+
+#### 📄 requirements.txt  
+Lists Python dependencies required to run the project, used during Docker image builds or manual environment setup.
+
+#### 📄 run_mail_api.bat  
+Windows batch script that automates the following:
+1. Stops and removes existing container (`mail-api`)
+2. Rebuilds the Docker image
+3. Launches the API in a detached container with environment variables
+
+#### 📄 readme.md  
+Documentation file you're currently reading. Provides project overview, usage instructions, and other relevant notes.
+
+---
+
+## Permissions
+
+The API has the following permissions:
+1. To read from a mailbox mentioned in `.env` file.
+2. To write to the dataverse table `Arth_Main`
+
+---
+
 ## ⚙️ Setup Instructions
 
 ### 1. Clone the Repo (If not already)
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/ayla-solutions/mail-categorisation-api.git
 cd <project-folder>
 ```
 
@@ -95,6 +143,12 @@ http://localhost:8000/mails
 ```
 http://localhost:8000/docs
 ```
+
+### 4. Azure CLI Setup
+
+The GitHub Repo is connected to the Azure CLI,. Whenever you push a change, the API will rebuild itself.
+
+
 
 ### Notes
 

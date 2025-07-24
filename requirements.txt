@@ -8,3 +8,11 @@ python-dotenv
 PyPDF2
 python-docx
 openpyxl
+
+# Required for OCR + Enhanced PDF parsing
+pdfplumber
+pdf2image
+pytesseract
+Pillow
+beautifulsoup4
+lxml  # optional, improves speed and parsing quality

@@ -1,99 +1,248 @@
-import requests
+"""
+utils/extract_attachments.py
+--------------------------------
+- Fetch messages from Graph with full body (HTML + text)
+- Robust attachment text extraction:
+    * pdf: try text layer via pdfplumber; fallback to OCR (if poppler+tesseract available)
+    * docx/xlsx/csv/html/txt/images: best-effort text extraction
+- Output fields per message (id, subject, body_text/html, attachments, attachment_text)
+"""
+
+# =========================
+# Imports
+# =========================
 import os
-from PyPDF2 import PdfReader
-from docx import Document
-import pandas as pd
+import base64
+from io import BytesIO
+from typing import List, Tuple
+
+import requests
 import pdfplumber
 from pdf2image import convert_from_bytes
 from PIL import ImageEnhance, Image
 import pytesseract
+import pandas as pd
+from docx import Document
 from bs4 import BeautifulSoup
 
-def extract_text_from_attachment(file_bytes, name):
-    name = name.lower()
+
+# =========================
+# HTML → plain text
+# =========================
+def _html_to_text(html: str | None) -> str:
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, "lxml")
+    return soup.get_text(separator=" ", strip=True)
+
+
+# =========================
+# Attachment extractors
+# =========================
+def _extract_pdf_text_layer(pdf_bytes: bytes) -> str:
+    out = []
     try:
-        if name.endswith(".pdf"):
-            text = ""
-            # Try extracting using pdfplumber
-            try:
-                with pdfplumber.open(file_bytes) as pdf:
-                    for page in pdf.pages:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n"
-            except Exception as e:
-                print(f"[pdfplumber failed] {e}")
-
-            # If no text found, fallback to OCR
-            if not text.strip():
-                print("[INFO] Falling back to OCR...")
-                images = convert_from_bytes(file_bytes, dpi=300)
-                for img in images:
-                    img = img.convert("L")  # grayscale
-                    img = ImageEnhance.Contrast(img).enhance(2.0)
-                    text += pytesseract.image_to_string(img) + "\n"
-
-            return text.strip()
-        elif name.endswith(".docx"):
-            doc = Document(file_bytes)
-            return "\n".join([p.text for p in doc.paragraphs])
-        elif name.endswith(".xlsx"):
-            df = pd.read_excel(file_bytes)
-            return df.to_string()
+        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    out.append(t)
     except Exception as e:
-        return f"[ERROR reading attachment: {e}]"
-    return "[Unsupported File]"
+        print(f"[pdfplumber failed] {e}")
+    return "\n".join(out).strip()
 
-def fetch_messages_with_attachments(token):
+def _ocr_pdf(pdf_bytes: bytes, dpi: int = 300) -> str:
+    """
+    OCR fallback for scanned PDFs (requires poppler & tesseract available in the container/host).
+    If missing, this will catch exceptions and return an error marker string (non-fatal).
+    """
+    try:
+        lines: List[str] = []
+        images = convert_from_bytes(pdf_bytes, dpi=dpi)
+        for img in images:
+            img = img.convert("L")
+            img = ImageEnhance.Contrast(img).enhance(2.0)
+            lines.extend(pytesseract.image_to_string(img).split("\n"))
+        return "\n".join(lines).strip()
+    except Exception as e:
+        return f"[ERROR OCR PDF: {e}]"
+
+def _ocr_image(img_bytes: bytes) -> str:
+    try:
+        img = Image.open(BytesIO(img_bytes))
+        img = img.convert("L")
+        img = ImageEnhance.Contrast(img).enhance(2.0)
+        return pytesseract.image_to_string(img)
+    except Exception as e:
+        return f"[ERROR OCR image: {e}]"
+
+def _extract_docx(docx_bytes: bytes) -> str:
+    try:
+        doc = Document(BytesIO(docx_bytes))
+        parts = [p.text for p in doc.paragraphs]
+        for table in doc.tables:
+            for row in table.rows:
+                parts.append("\t".join(cell.text for cell in row.cells))
+        return "\n".join(parts).strip()
+    except Exception as e:
+        return f"[ERROR reading DOCX: {e}]"
+
+def _extract_xlsx(xlsx_bytes: bytes) -> str:
+    try:
+        out: List[str] = []
+        xls = pd.ExcelFile(BytesIO(xlsx_bytes))
+        for sheet in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=sheet, dtype=str)
+            out.append(f"=== Sheet: {sheet} ===")
+            out.append(df.fillna("").to_string(index=False))
+        return "\n".join(out).strip()
+    except Exception as e:
+        return f"[ERROR reading XLSX: {e}]"
+
+def _extract_csv(csv_bytes: bytes) -> str:
+    try:
+        df = pd.read_csv(BytesIO(csv_bytes), dtype=str)
+        return df.fillna("").to_string(index=False)
+    except Exception as e:
+        return f"[ERROR reading CSV: {e}]"
+
+def _extract_html(html_bytes: bytes) -> str:
+    try:
+        return _html_to_text(html_bytes.decode(errors="ignore"))
+    except Exception as e:
+        return f"[ERROR reading HTML: {e}]"
+
+
+# =========================
+# Public: single-attachment extraction
+# =========================
+def extract_text_from_attachment(file_bytes: bytes, name: str) -> Tuple[str, str]:
+    """
+    Returns (extracted_text, method_tag)
+    """
+    n = (name or "").lower().strip()
+    try:
+        if n.endswith(".pdf"):
+            text = _extract_pdf_text_layer(file_bytes)
+            if text:
+                return text, "pdf-text"
+            return _ocr_pdf(file_bytes), "pdf-ocr"
+        if n.endswith(".docx"):
+            return _extract_docx(file_bytes), "docx"
+        if n.endswith(".xlsx"):
+            return _extract_xlsx(file_bytes), "xlsx"
+        if n.endswith(".csv"):
+            return _extract_csv(file_bytes), "csv"
+        if n.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp")):
+            return _ocr_image(file_bytes), "image-ocr"
+        if n.endswith((".htm", ".html")):
+            return _extract_html(file_bytes), "html"
+        if n.endswith(".txt"):
+            try:
+                return file_bytes.decode(errors="ignore"), "text"
+            except Exception:
+                return "[ERROR reading TXT]", "text"
+        return "[Unsupported File Type]", "unknown"
+    except Exception as e:
+        return f"[ERROR reading attachment: {e}]", "unknown"
+
+
+# =========================
+# Graph helpers
+# =========================
+def _download_attachment_bytes(headers: dict, user: str, msg_id: str, att: dict) -> bytes:
+    """
+    Prefer 'contentBytes' from Graph; otherwise fetch the $value stream.
+    """
+    if "contentBytes" in att and att["contentBytes"]:
+        return base64.b64decode(att["contentBytes"])
+    url = f"https://graph.microsoft.com/v1.0/users/{user}/messages/{msg_id}/attachments/{att['id']}/$value"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    return resp.content
+
+def _get_full_message_body(headers: dict, user: str, msg_id: str) -> tuple[str, str]:
+    """
+    Returns (body_html, body_text) by explicitly selecting 'body'.
+    """
+    url = f"https://graph.microsoft.com/v1.0/users/{user}/messages/{msg_id}?$select=body,bodyPreview"
+    try:
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        body = (r.json() or {}).get("body", {})
+        ctype = (body.get("contentType") or "").lower()
+        content = body.get("content") or ""
+        if ctype == "html":
+            return content, _html_to_text(content)
+        return "", content
+    except Exception as e:
+        print(f"[BODY FETCH WARN] {e}")
+        return "", ""
+
+
+# =========================
+# Public: fetch messages with bodies & attachments
+# =========================
+def fetch_messages_with_attachments(token: str) -> list[dict]:
+    """
+    Returns list of mail dicts with:
+      id, sender, received_from, subject, received_at,
+      body_preview, mail_body_html, mail_body_text,
+      attachments (names), attachment_methods, attachment_text
+    """
     headers = {"Authorization": f"Bearer {token}"}
-    messages_url = f"https://graph.microsoft.com/v1.0/users/{os.getenv('MAILBOX_USER')}/messages?$top=100"
+    user = os.getenv("MAILBOX_USER")
 
-    res = requests.get(messages_url, headers=headers)
+    url = f"https://graph.microsoft.com/v1.0/users/{user}/messages?$top=10&$select=id,subject,from,receivedDateTime,bodyPreview"
+    res = requests.get(url, headers=headers)
+    res.raise_for_status()
     data = res.json()
 
     results = []
     for msg in data.get("value", []):
         msg_id = msg["id"]
-        attachments_url = f"https://graph.microsoft.com/v1.0/users/{os.getenv('MAILBOX_USER')}/messages/{msg_id}/attachments"
 
-        atts = requests.get(attachments_url, headers=headers).json().get("value", [])
-        attachment_names = []
-        extracted_content = []
+        # (1) Full body
+        body_html, body_text = _get_full_message_body(headers, user, msg_id)
+
+        # (2) Attachments
+        atts_url = f"https://graph.microsoft.com/v1.0/users/{user}/messages/{msg_id}/attachments"
+        atts_resp = requests.get(atts_url, headers=headers)
+        atts_resp.raise_for_status()
+        atts = atts_resp.json().get("value", [])
+
+        attachment_names: List[str] = []
+        extracted_content: List[str] = []
+        methods: List[str] = []
 
         for att in atts:
+            # Only process file attachments (skip item/reference types)
+            if att.get("@odata.type") != "#microsoft.graph.fileAttachment":
+                attachment_names.append(att.get("name", ""))
+                continue
+
             name = att.get("name", "")
-            if att.get("@odata.mediaContentType"):
-                attachment_url = att.get("@odata.mediaReadLink")
-                if attachment_url and attachment_url.startswith("https"):
-                    content = requests.get(attachment_url, headers=headers).content
-                else:
-                    content = b''  # or fallback to empty or skip
-                text = extract_text_from_attachment(content, name)
-                extracted_content.append(text)
+            try:
+                content = _download_attachment_bytes(headers, user, msg_id, att)
+                text, method = extract_text_from_attachment(content, name)
+            except Exception as e:
+                text, method = f"[ERROR downloading/extracting {name}: {e}]", "unknown"
+
             attachment_names.append(name)
-
-
-        body = msg.get("body", {})
-        raw_content = body.get("content", "")
-        content_type = body.get("contentType", "")
-
-        if content_type == "html":
-            # Convert HTML to plain text
-            soup = BeautifulSoup(raw_content, "html.parser")
-            mail_body_text = soup.get_text(separator="\n").strip()
-        else:
-            # Already plain text
-            mail_body_text = raw_content.strip()
+            methods.append(method)
+            extracted_content.append(text)
 
         results.append({
-            "id":  msg.get("id"),
+            "id": msg.get("id"),
             "sender": msg.get("from", {}).get("emailAddress", {}).get("name", "Unknown"),
             "received_from": msg.get("from", {}).get("emailAddress", {}).get("address", "Unknown"),
             "subject": msg.get("subject"),
-            "body_preview": msg.get("bodyPreview"),
-            "mail_body": msg.get("body", {}).get("content", ""),
             "received_at": msg.get("receivedDateTime"),
+            "body_preview": msg.get("bodyPreview") or "",
+            "mail_body_html": body_html,
+            "mail_body_text": body_text,
             "attachments": attachment_names,
+            "attachment_methods": methods,
             "attachment_text": "\n\n".join(extracted_content),
         })
 

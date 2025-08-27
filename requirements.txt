@@ -1,18 +1,15 @@
 fastapi
-uvicorn
-apscheduler
-msal
-pandas
+uvicorn[standard]
 requests
 python-dotenv
-PyPDF2
-python-docx
-openpyxl
+msal
 
-# Required for OCR + Enhanced PDF parsing
+pandas
+openpyxl
+python-docx
 pdfplumber
 pdf2image
 pytesseract
 Pillow
 beautifulsoup4
-lxml  # optional, improves speed and parsing quality
+lxml

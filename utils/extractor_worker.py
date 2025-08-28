@@ -145,16 +145,18 @@ def enrich_and_patch_dataverse(mail: Dict[str, Any]) -> None:
 
     # ---- Build payload with ONLY the text we want the LLM to see ----
     text_blob = _combined_text(mail)
-    recieved_at = mail.get("receivedDateTime")
+    received_at = mail.get("received_at") or mail.get("receivedDateTime")
     payload = {
         "graph_id":    graph_id,   # passthrough; extractor may ignore
         "subject":     mail.get("subject"),
         "sender":      "",
         "body_html":   "",
         "body_text":   text_blob,  # ← THE ONLY CONTENT WE SEND
-        "received_at": recieved_at,
+        "received_at": received_at,
         "attachments": [],
     }
+    logging.info("worker_payload_built", extra={"graph_id": graph_id, "received_at": received_at, "body_len": len(text_blob)})
+
 
     # ---- Call extractor, fallback to keyword classify on failure ----
     try:

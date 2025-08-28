@@ -13,3 +13,5 @@ pytesseract
 Pillow
 beautifulsoup4
 lxml
+
+python-json-logger

@@ -193,7 +193,15 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}"}
     user = os.getenv("MAILBOX_USER")
 
-    url = f"https://graph.microsoft.com/v1.0/users/{user}/messages?$top=10&$select=id,subject,from,receivedDateTime,bodyPreview"
+    TOP_N = int(os.getenv("GRAPH_MAIL_TOP", "10"))
+
+    url = (
+        "https://graph.microsoft.com/v1.0/users/"
+        f"{user}/messages?$top={TOP_N}"
+        "&$select=id,subject,from,receivedDateTime,bodyPreview"
+        "&$orderby=receivedDateTime desc"
+    )
+
     res = requests.get(url, headers=headers)
     res.raise_for_status()
     data = res.json()

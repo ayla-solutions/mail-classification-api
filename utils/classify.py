@@ -8,12 +8,13 @@ Returns: {"category": <str>, "priority": <str>}
 # =========================
 # Public: classify_mail
 # =========================
+import logging
+from logging_setup import init_logging
+init_logging()
+log = logging.getLogger("utils.classify")
+
 def classify_mail(mail: dict) -> dict:
-    """
-    Cheap keyword heuristic:
-      - Category uses lower-case canonical names (e.g., 'invoice')
-      - Priority 'High' if urgency words are present, else 'Low'
-    """
+    """Heuristic fallback."""
     subject = (mail.get("subject") or "").lower()
     body    = (mail.get("body_preview") or "").lower()
     attn    = " ".join(mail.get("attachments", [])).lower()
@@ -36,6 +37,8 @@ def classify_mail(mail: dict) -> dict:
 
     for cat, kws in categories.items():
         if any(kw in text for kw in kws):
+            log.debug("Fallback classify hit", extra={"category": cat, "priority": priority})
             return {"category": cat, "priority": priority}
 
+    log.debug("Fallback classify default general")
     return {"category": "general", "priority": priority}

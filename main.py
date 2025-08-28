@@ -152,7 +152,7 @@ def process_mails():
         mid   = m.get("id")
         subj  = (m.get("subject") or "")[:120]
         set_graph_id(mid)  # correlated logs from here
-        log.info("mail_begin", extra={"graph_id": mid, "subject": subj})
+        log.info("mail_begin", extra={"kv": {"graph_id": mid, "subject": subj}})
 
         # Basic previews (no sensitive dump)
         body_preview = _preview(m.get("mail_body_text") or m.get("mail_body") or m.get("body_preview") or "")
@@ -168,9 +168,9 @@ def process_mails():
 
         if phase1_ok:
             created_or_skipped += 1
-            log.info("dv_create_or_skip_ok", extra={"graph_id": mid, "elapsed_ms": c_ms})
+            log.info("dv_create_or_skip_ok", extra={"kv": {"graph_id": mid, "elapsed_ms": c_ms}})
         else:
-            log.error("dv_create_failed", extra={"graph_id": mid, "elapsed_ms": c_ms})
+            log.error("dv_create_failed", extra={"kv": {"graph_id": mid, "elapsed_ms": c_ms}})
 
         # ---- Phase 2: queue enrichment (pass only needed fields; include subject & received_at) ----
         worker_mail = {
@@ -185,16 +185,26 @@ def process_mails():
         _executor.submit(enrich_and_patch_dataverse, worker_mail)
         queued += 1
 
-        log.info(
-            "enrichment_queued",
-            extra={
+        log.info("enrichment_queued", extra={
+            "kv": {
                 "graph_id": mid,
-                "body_text": body_preview,
-                "attachment_text": att_preview,
+                "body_text": {
+                    "len": len(str(body_preview or "")),
+                    "preview": str(body_preview or "")[:140] + (
+                        "…" if body_preview and len(str(body_preview)) > 140 else ""
+                    ),
+                },
+                "attachment_text": {
+                    "len": len(str(att_preview or "")),
+                    "preview": str(att_preview or "")[:140] + (
+                        "…" if att_preview and len(str(att_preview)) > 140 else ""
+                    ),
+                },
                 "attachments_count": len(m.get("attachments") or []),
                 "attachment_methods": m.get("attachment_methods") or [],
-            },
-        )
+            }
+        })
+
 
         details.append(
             {

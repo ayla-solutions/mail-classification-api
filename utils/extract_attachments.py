@@ -1,11 +1,12 @@
 """
-utils/extract_attachments.py
---------------------------------
 - Fetch messages from Graph with full body (HTML + text)
 - Robust attachment text extraction:
     * pdf: try text layer via pdfplumber; fallback to OCR (if poppler+tesseract available)
     * docx/xlsx/csv/html/txt/images: best-effort text extraction
 - Output fields per message (id, subject, body_text/html, attachments, attachment_text)
+
+NEW (2025-08-31):
+- Delegated Graph (/me) support: no mailbox parameter; the token belongs to the signed-in user.
 """
 
 # =========================
@@ -148,24 +149,24 @@ def extract_text_from_attachment(file_bytes: bytes, name: str) -> Tuple[str, str
 
 
 # =========================
-# Graph helpers
+# Graph helpers (delegated, /me)
 # =========================
-def _download_attachment_bytes(headers: dict, user: str, msg_id: str, att: dict) -> bytes:
+def _download_attachment_bytes(headers: dict, msg_id: str, att: dict) -> bytes:
     """
     Prefer 'contentBytes' from Graph; otherwise fetch the $value stream.
     """
     if "contentBytes" in att and att["contentBytes"]:
         return base64.b64decode(att["contentBytes"])
-    url = f"https://graph.microsoft.com/v1.0/users/{user}/messages/{msg_id}/attachments/{att['id']}/$value"
+    url = f"https://graph.microsoft.com/v1.0/me/messages/{att['messageId'] if 'messageId' in att else msg_id}/attachments/{att['id']}/$value"
     resp = requests.get(url, headers=headers)
     resp.raise_for_status()
     return resp.content
 
-def _get_full_message_body(headers: dict, user: str, msg_id: str) -> tuple[str, str]:
+def _get_full_message_body(headers: dict, msg_id: str) -> tuple[str, str]:
     """
     Returns (body_html, body_text) by explicitly selecting 'body'.
     """
-    url = f"https://graph.microsoft.com/v1.0/users/{user}/messages/{msg_id}?$select=body,bodyPreview"
+    url = f"https://graph.microsoft.com/v1.0/me/messages/{msg_id}?$select=body,bodyPreview"
     try:
         r = requests.get(url, headers=headers)
         r.raise_for_status()
@@ -181,7 +182,7 @@ def _get_full_message_body(headers: dict, user: str, msg_id: str) -> tuple[str, 
 
 
 # =========================
-# Public: fetch messages with bodies & attachments
+# Public: fetch messages with bodies & attachments (delegated /me)
 # =========================
 def fetch_messages_with_attachments(token: str) -> list[dict]:
     """
@@ -191,13 +192,11 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
       attachments (names), attachment_methods, attachment_text
     """
     headers = {"Authorization": f"Bearer {token}"}
-    user = os.getenv("MAILBOX_USER")
-
     TOP_N = int(os.getenv("GRAPH_MAIL_TOP", "10"))
 
     url = (
-        "https://graph.microsoft.com/v1.0/users/"
-        f"{user}/messages?$top={TOP_N}"
+        "https://graph.microsoft.com/v1.0/me/messages"
+        f"?$top={TOP_N}"
         "&$select=id,subject,from,receivedDateTime,bodyPreview"
         "&$orderby=receivedDateTime desc"
     )
@@ -211,10 +210,10 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
         msg_id = msg["id"]
 
         # (1) Full body
-        body_html, body_text = _get_full_message_body(headers, user, msg_id)
+        body_html, body_text = _get_full_message_body(headers, msg_id)
 
         # (2) Attachments
-        atts_url = f"https://graph.microsoft.com/v1.0/users/{user}/messages/{msg_id}/attachments"
+        atts_url = f"https://graph.microsoft.com/v1.0/me/messages/{msg_id}/attachments"
         atts_resp = requests.get(atts_url, headers=headers)
         atts_resp.raise_for_status()
         atts = atts_resp.json().get("value", [])
@@ -231,7 +230,7 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
 
             name = att.get("name", "")
             try:
-                content = _download_attachment_bytes(headers, user, msg_id, att)
+                content = _download_attachment_bytes(headers, msg_id, att)
                 text, method = extract_text_from_attachment(content, name)
             except Exception as e:
                 text, method = f"[ERROR downloading/extracting {name}: {e}]", "unknown"

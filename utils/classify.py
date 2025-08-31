@@ -21,12 +21,8 @@ def classify_mail(mail: dict) -> dict:
     text = f"{subject} {body} {attn}"
 
     categories = {
-        "invoice":              ["invoice", "bill", "statement"],
-        "service request":      ["issue", "support", "ticket"],
-        "team member request":  ["access", "permission", "request"],
-        "customer request":     ["client", "customer", "enquiry", "inquiry"],
-        "meeting":              ["meeting", "calendar", "invite"],
-        "timesheets":           ["timesheet", "approval", "work hours"],
+        "Invoice":              ["invoice", "bill", "statement"],
+        "Customer Requests":     ["client", "customer", "enquiry", "inquiry"],
     }
 
     priority = "Low"

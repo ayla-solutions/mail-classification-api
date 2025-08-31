@@ -13,6 +13,10 @@ This version adds:
 - Slow-step warnings with thresholds controlled via env
 - Safer, richer /health endpoint
 - FIX: Pass `subject` and `received_at` to the worker (for ticket numbers & summaries)
+
+NEW (2025-08-31):
+- Delegated Graph (On-Behalf-Of): accept user's bearer from Custom Connector and exchange for Graph delegated token.
+- Switch Graph calls to /me (no hard-coded mailbox).
 """
 
 import os
@@ -22,33 +26,31 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Header, HTTPException
 
 from logging_setup import init_logging, set_request_id, set_graph_id
-from utils.auth import get_graph_token
+from utils.auth_obo import get_graph_token_obo
 from utils.extract_attachments import fetch_messages_with_attachments
 from utils.dataverse import create_basic_email_row
 from utils.extractor_worker import enrich_and_patch_dataverse
 
 # ------------------------------------------------------------------------------
-# Setup & Config
-# ------------------------------------------------------------------------------
+
 init_logging()
 log = logging.getLogger("main")
 
 WORKERS = int(os.getenv("ENRICHMENT_WORKERS", "4"))
-SLOW_GRAPH_MS = int(os.getenv("SLOW_GRAPH_MS", "4000"))        # warn if Graph ops exceed 4s
-SLOW_DV_MS    = int(os.getenv("SLOW_DV_MS", "3000"))           # warn if Dataverse ops exceed 3s
-SLOW_EX_MS    = int(os.getenv("SLOW_EX_MS", "8000"))           # warn if extractor end-to-end exceeds 8s (measured in worker)
-PREVIEW_CHARS = int(os.getenv("LOG_PREVIEW_CHARS", "280"))     # payload preview length
+SLOW_GRAPH_MS = int(os.getenv("SLOW_GRAPH_MS", "4000"))
+SLOW_DV_MS    = int(os.getenv("SLOW_DV_MS", "3000"))
+SLOW_EX_MS    = int(os.getenv("SLOW_EX_MS", "8000"))
+PREVIEW_CHARS = int(os.getenv("LOG_PREVIEW_CHARS", "280"))
 LOG_LEVEL     = os.getenv("LOG_LEVEL", "INFO").upper()
 
 _executor = ThreadPoolExecutor(max_workers=WORKERS)
 app = FastAPI(title="Mail Classification API (instrumented)")
 
 # ------------------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------------------
+
 def _preview(s: str | None, lim: int = PREVIEW_CHARS) -> Dict[str, Any]:
     """
     Return a small safe summary of a potentially long/sensitive string.
@@ -60,12 +62,11 @@ def _preview(s: str | None, lim: int = PREVIEW_CHARS) -> Dict[str, Any]:
     return {"len": len(s), "preview": s[:lim] + ("…" if len(s) > lim else "")}
 
 # ------------------------------------------------------------------------------
-# Middleware: assign request_id + log basic request/response envelope
-# ------------------------------------------------------------------------------
+
 @app.middleware("http")
 async def add_request_context(request: Request, call_next):
     rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-    set_request_id(rid)  # put into logging context for all nested logs
+    set_request_id(rid)
     start = time.perf_counter()
 
     log.info(
@@ -93,11 +94,10 @@ async def add_request_context(request: Request, call_next):
         response.headers["X-Request-ID"] = rid
         return response
     finally:
-        set_request_id(None)  # clear context
+        set_request_id(None)
 
 # ------------------------------------------------------------------------------
-# Endpoints
-# ------------------------------------------------------------------------------
+
 @app.get("/")
 def root():
     return {"message": "Mail Classification API is running (instrumented)"}
@@ -110,29 +110,35 @@ def health():
         "log_level": LOG_LEVEL,
         "slow_ms": {"graph": SLOW_GRAPH_MS, "dataverse": SLOW_DV_MS, "extractor": SLOW_EX_MS},
         "preview_chars": PREVIEW_CHARS,
+        "auth": "delegated-obo",
     }
 
 @app.get("/mails")
-def process_mails():
+def process_mails(authorization: str = Header(None)):
     """
     Fetch mails (+ attachments), Phase-1 insert, Phase-2 queue enrichment.
-    Returns quick counts and detailed timing/per-mail debug info (no sensitive dumps).
+    Uses delegated Graph token via OBO (no mailbox param needed).
     """
     req_id = uuid.uuid4().hex
     set_request_id(req_id)
 
-    # ---------- Graph token ----------
+    # ---- 1) Require user's bearer from the Custom Connector (OAuth 2.0) ----
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token from connector")
+    user_token = authorization.split(" ", 1)[1].strip()
+
+    # ---- 2) Exchange for Graph delegated token (OBO) ----
     t0 = time.perf_counter()
-    token = get_graph_token()
+    graph_token = get_graph_token_obo(user_token)  # raises on failure
     t1 = time.perf_counter()
     tok_ms = int((t1 - t0) * 1000)
-    log.info("graph_token_ok", extra={"elapsed_ms": tok_ms, "request_id": req_id})
+    log.info("graph_token_obo_ok", extra={"elapsed_ms": tok_ms, "request_id": req_id})
     if tok_ms > SLOW_GRAPH_MS:
-        log.warning("slow_graph_token", extra={"elapsed_ms": tok_ms, "request_id": req_id})
+        log.warning("slow_graph_token_obo", extra={"elapsed_ms": tok_ms, "request_id": req_id})
 
-    # ---------- Fetch messages + attachments ----------
+    # ---- 3) Fetch messages for the signed-in user (/me) ----
     t2 = time.perf_counter()
-    mails = fetch_messages_with_attachments(token)
+    mails = fetch_messages_with_attachments(graph_token)  # now uses /me paths
     t3 = time.perf_counter()
     fetch_ms = int((t3 - t2) * 1000)
     fetched = len(mails)
@@ -147,20 +153,19 @@ def process_mails():
     queued = 0
     details: list[Dict[str, Any]] = []
 
-    # ---------- Per-mail processing ----------
+    # ---- 4) Phase 1 + queue Phase 2 per message ----
     for m in mails:
         mid   = m.get("id")
         subj  = (m.get("subject") or "")[:120]
-        set_graph_id(mid)  # correlated logs from here
+        set_graph_id(mid)
         log.info("mail_begin", extra={"kv": {"graph_id": mid, "subject": subj}})
 
-        # Basic previews (no sensitive dump)
         body_preview = _preview(m.get("mail_body_text") or m.get("mail_body") or m.get("body_preview") or "")
         att_preview  = _preview(m.get("attachment_text") or "")
 
-        # ---- Phase 1: idempotent DV create ----
+        # Phase 1 (idempotent Dataverse create)
         c0 = time.perf_counter()
-        phase1_ok = create_basic_email_row(m)  # function itself is idempotent
+        phase1_ok = create_basic_email_row(m)
         c1 = time.perf_counter()
         c_ms = int((c1 - c0) * 1000)
         if c_ms > SLOW_DV_MS:
@@ -172,7 +177,7 @@ def process_mails():
         else:
             log.error("dv_create_failed", extra={"kv": {"graph_id": mid, "elapsed_ms": c_ms}})
 
-        # ---- Phase 2: queue enrichment (pass only needed fields; include subject & received_at) ----
+        # Phase 2 (background enrichment)
         worker_mail = {
             "id": mid,
             "subject": m.get("subject"),
@@ -205,13 +210,12 @@ def process_mails():
             }
         })
 
-
         details.append(
             {
                 "graph_id": mid,
                 "subject": subj,
-                "body_text": body_preview,           # size + short prefix only
-                "attachment_text": att_preview,      # size + short prefix only
+                "body_text": body_preview,
+                "attachment_text": att_preview,
                 "attachments_count": len(m.get("attachments") or []),
                 "attachment_methods": m.get("attachment_methods") or [],
                 "created_or_skipped": phase1_ok,
@@ -219,7 +223,6 @@ def process_mails():
             }
         )
 
-        # clear per-mail correlation so we don't leak it to next iterations
         set_graph_id(None)
 
     set_request_id(None)
@@ -229,5 +232,5 @@ def process_mails():
         "phase1_created_or_skipped": created_or_skipped,
         "phase2_queued_enrichment": queued,
         "graph_fetch_ms": fetch_ms,
-        "details": details,  # diagnostic summaries for each mail (safe previews only)
+        "details": details,
     }

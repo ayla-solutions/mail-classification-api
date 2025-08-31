@@ -15,3 +15,5 @@ beautifulsoup4
 lxml
 
 python-json-logger
+msal==1.28.0
+pyjwt==2.9.0

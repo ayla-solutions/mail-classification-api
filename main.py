@@ -25,6 +25,8 @@ import uuid
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from fastapi import FastAPI, Request, Response, Header, HTTPException
 
@@ -48,7 +50,7 @@ LOG_LEVEL     = os.getenv("LOG_LEVEL", "INFO").upper()
 
 _executor = ThreadPoolExecutor(max_workers=WORKERS)
 app = FastAPI(title="Mail Classification API (instrumented)")
-
+bearer_security = HTTPBearer(auto_error=False)
 # ------------------------------------------------------------------------------
 
 def _preview(s: str | None, lim: int = PREVIEW_CHARS) -> Dict[str, Any]:
@@ -129,7 +131,13 @@ def process_mails(authorization: str = Header(None)):
 
     # ---- 2) Exchange for Graph delegated token (OBO) ----
     t0 = time.perf_counter()
-    graph_token = get_graph_token_obo(user_token)  # raises on failure
+    graph_token = get_graph_token_obo(user_token)
+    try:
+        graph_token = get_graph_token_obo(user_token)  # now raises RuntimeError with clear message
+    except RuntimeError as e:
+        # Turn all OBO/config problems into a clean 401 instead of crashing the process
+        log.error("obo_error", extra={"request_id": req_id, "error": str(e)})
+        raise HTTPException(status_code=401, detail=str(e))
     t1 = time.perf_counter()
     tok_ms = int((t1 - t0) * 1000)
     log.info("graph_token_obo_ok", extra={"elapsed_ms": tok_ms, "request_id": req_id})

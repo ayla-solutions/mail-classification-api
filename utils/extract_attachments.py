@@ -206,7 +206,7 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
 
     results = []
     for msg in data.get("value", []):
-        msg_id = msg["id"]s
+        msg_id = msg["id"]
 
         # (1) Full body
         body_html, body_text = _get_full_message_body(headers, msg_id)

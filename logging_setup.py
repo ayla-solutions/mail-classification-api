@@ -39,6 +39,21 @@ def set_graph_id(gid: str | None) -> None:
 def set_request_id(rid: str | None) -> None:
     request_id_var.set(rid)
 
+
+import logging, sys, os
+def setup_logging():
+    level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        handlers=[logging.StreamHandler(sys.stdout)],
+        format="%(message)s",
+        force=True,  # override any prior config
+    )
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "gunicorn.error", "gunicorn.access"):
+        lg = logging.getLogger(name)
+        lg.setLevel(level)
+        lg.propagate = True
+
 # ----------------------------
 # Pretty key/value helper
 # ----------------------------

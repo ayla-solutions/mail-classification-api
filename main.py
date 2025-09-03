@@ -56,6 +56,19 @@ def _peek_claims(bearer: str) -> dict:
 
 # ------------------------------------------------------------------------------
 
+# main.py
+if __name__ == "__main__":
+    from logging_setup import setup_logging
+    setup_logging()
+    import uvicorn, os
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        access_log=True,              # make sure this is True
+    )
+
+
 @app.middleware("http")
 async def add_request_context(request: Request, call_next):
     rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())

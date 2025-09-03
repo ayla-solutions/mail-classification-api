@@ -89,22 +89,21 @@ async def validate_aad_bearer(auth_header: str) -> dict:
     Validate Authorization: Bearer <token> from ANY AAD tenant (multi-tenant).
     Enforces:
       - issuer  = https://login.microsoftonline.com/{tid}/v2.0
-      - audience= API_AUDIENCE (accepts both api://<guid> and <guid> forms)
+      - audience in { api://<app-id-guid>, <app-id-guid> }
       - scope   contains API_ALLOWED_SCOPE
     Returns decoded claims on success.
     """
     token = _extract_bearer(auth_header)
 
     # Peek unverified claims to learn tenant (tid) and issuer
-    unverified_claims = jwt.get_unverified_claims(token)
-    tid = unverified_claims.get("tid")
-    iss = unverified_claims.get("iss")
+    unverified = jwt.get_unverified_claims(token)
+    tid = unverified.get("tid")
+    iss = unverified.get("iss")
     if not tid or not iss or not iss.startswith(f"https://login.microsoftonline.com/{tid}/v2.0"):
         raise ValueError("Invalid issuer/tenant in token")
 
     # Optional per-tenant allowlist
     if ALLOWED_TENANTS and tid not in ALLOWED_TENANTS:
-        # You can change this to 403 if you prefer "forbidden" over "unauthorized".
         raise ValueError("Tenant not allowed")
 
     # Fetch tenant-specific signing keys (JWKS)
@@ -113,49 +112,43 @@ async def validate_aad_bearer(auth_header: str) -> dict:
     kid = header.get("kid")
     key = next((k for k in jwks["keys"] if k.get("kid") == kid), None)
     if not key:
-        # try one refresh in case of rotation
-        _jwks_cache.pop(f"jwks:{tid}", None)
+        _jwks_cache.pop(f"jwks:{tid}", None)  # refresh once
         jwks = await _jwks_for(tid)
         key = next((k for k in jwks["keys"] if k.get("kid") == kid), None)
         if not key:
             raise ValueError("Signing key not found")
 
-    # Accept both audience representations:
-    #   - api://<app-id-guid>
-    #   - <app-id-guid>
-    aud_uri = API_AUDIENCE
-    aud_set = {aud_uri}
-    if aud_uri.startswith("api://"):
-        aud_set.add(aud_uri.removeprefix("api://"))
+    # Build accepted audience forms
+    aud_uri = API_AUDIENCE                               # e.g., "api://8372...4437c"
+    aud_guid = aud_uri.removeprefix("api://") if aud_uri.startswith("api://") else aud_uri
+    accepted_aud = {aud_uri, aud_guid}
 
-    # Verify signature, audience, issuer, expiry
-    try:
-        claims = jwt.decode(
-            token,
-            key,
-            algorithms=[key.get("alg", "RS256"), "RS256"],
-            audience=list(aud_set),
-            issuer=f"https://login.microsoftonline.com/{tid}/v2.0",
-            options={"verify_aud": True, "verify_exp": True},
-        )
-    except Exception as e:
-        # Helpful log for audience mismatches during connector setup
-        try:
-            got_aud = jwt.get_unverified_claims(token).get("aud")
-        except Exception:
-            got_aud = None
-        log.warning("audience_mismatch", extra={"expected": list(aud_set), "got": got_aud})
-        raise
+    # Decode with issuer/exp but WITHOUT built-in audience verification
+    claims = jwt.decode(
+        token,
+        key,
+        algorithms=[key.get("alg", "RS256"), "RS256"],
+        issuer=f"https://login.microsoftonline.com/{tid}/v2.0",
+        options={"verify_exp": True, "verify_aud": False},   # <-- important change
+    )
 
-    # Enforce scope
+    # Manual audience check supporting both forms + list-or-str shapes
+    aud_claim = claims.get("aud")
+    if isinstance(aud_claim, (list, tuple)):
+        if not any(a in accepted_aud for a in aud_claim):
+            raise ValueError("Invalid audience")
+    else:
+        if aud_claim not in accepted_aud:
+            raise ValueError("Invalid audience")
+
+    # Scope check
     scopes = (claims.get("scp") or "").split(" ")
     if API_ALLOWED_SCOPE not in scopes:
         raise ValueError("Insufficient scope")
 
-    # Log minimal caller identity for traceability
     log.debug(
         "AAD token validated",
-        extra={"caller_tid": tid, "caller_oid": claims.get("oid"), "scp": scopes},
+        extra={"caller_tid": tid, "caller_oid": claims.get("oid"), "scp": scopes, "aud": aud_claim},
     )
 
     # ------------------------------------------------------------------

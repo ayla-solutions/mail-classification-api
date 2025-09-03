@@ -26,7 +26,6 @@ import pandas as pd
 from docx import Document
 from bs4 import BeautifulSoup
 
-
 # =========================
 # HTML → plain text
 # =========================
@@ -192,11 +191,6 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
       attachments (names), attachment_methods, attachment_text
     """
 
-    log.info("graph_fetch_preview", extra={
-    "count": len(mails),
-    "scopes": claims.get("scp"),
-    "aud": claims.get("aud"),
-})
     headers = {"Authorization": f"Bearer {token}"}
     TOP_N = int(os.getenv("GRAPH_MAIL_TOP", "10"))
 

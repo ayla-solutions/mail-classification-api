@@ -22,11 +22,11 @@ init_logging()
 log = logging.getLogger("utils.auth")
 
 # ----- App-only (client credentials) for Graph -----
-TENANT_ID     = os.getenv("TENANT_ID")                    # tenant to acquire app-only token against
-CLIENT_ID     = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-AUTH_URL      = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
-GRAPH_SCOPE   = "https://graph.microsoft.com/.default"
+TENANT_ID      = os.getenv("TENANT_ID")   # tenant to acquire app-only token against
+CLIENT_ID      = os.getenv("CLIENT_ID")
+CLIENT_SECRET  = os.getenv("CLIENT_SECRET")
+AUTH_URL       = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+GRAPH_SCOPE    = "https://graph.microsoft.com/.default"
 
 def get_graph_token() -> str:
     """Client-credentials flow → app-only Graph access token (for backend to call Graph)."""
@@ -47,10 +47,10 @@ def get_graph_token() -> str:
         raise
 
 # ----- Inbound multi-tenant JWT validation (for protecting your API) -----
-API_AUDIENCE     = os.getenv("API_AUDIENCE", "api://837228e1-de28-4329-8c48-c4374694437c")
-API_ALLOWED_SCOPE = os.getenv("API_ALLOWED_SCOPE", "access_as_user")
+API_AUDIENCE       = os.getenv("API_AUDIENCE", "api://837228e1-de28-4329-8c48-c4374694437c")
+API_ALLOWED_SCOPE  = os.getenv("API_ALLOWED_SCOPE", "access_as_user")
 # Optional: allowlist of tenant IDs (comma-separated). Leave empty to allow any AAD tenant.
-ALLOWED_TENANTS  = {t.strip() for t in os.getenv("ALLOWED_TENANTS", "").split(",") if t.strip()}
+ALLOWED_TENANTS    = {t.strip() for t in os.getenv("ALLOWED_TENANTS", "").split(",") if t.strip()}
 
 # Cache per-tenant OpenID config and JWKS (24h)
 _cfg_cache: TTLCache = TTLCache(maxsize=1024, ttl=24 * 3600)
@@ -89,7 +89,7 @@ async def validate_aad_bearer(auth_header: str) -> dict:
     Validate Authorization: Bearer <token> from ANY AAD tenant (multi-tenant).
     Enforces:
       - issuer  = https://login.microsoftonline.com/{tid}/v2.0
-      - audience= API_AUDIENCE
+      - audience= API_AUDIENCE (accepts both api://<guid> and <guid> forms)
       - scope   contains API_ALLOWED_SCOPE
     Returns decoded claims on success.
     """
@@ -102,7 +102,9 @@ async def validate_aad_bearer(auth_header: str) -> dict:
     if not tid or not iss or not iss.startswith(f"https://login.microsoftonline.com/{tid}/v2.0"):
         raise ValueError("Invalid issuer/tenant in token")
 
+    # Optional per-tenant allowlist
     if ALLOWED_TENANTS and tid not in ALLOWED_TENANTS:
+        # You can change this to 403 if you prefer "forbidden" over "unauthorized".
         raise ValueError("Tenant not allowed")
 
     # Fetch tenant-specific signing keys (JWKS)
@@ -118,15 +120,32 @@ async def validate_aad_bearer(auth_header: str) -> dict:
         if not key:
             raise ValueError("Signing key not found")
 
+    # Accept both audience representations:
+    #   - api://<app-id-guid>
+    #   - <app-id-guid>
+    aud_uri = API_AUDIENCE
+    aud_set = {aud_uri}
+    if aud_uri.startswith("api://"):
+        aud_set.add(aud_uri.removeprefix("api://"))
+
     # Verify signature, audience, issuer, expiry
-    claims = jwt.decode(
-        token,
-        key,
-        algorithms=[key.get("alg", "RS256"), "RS256"],
-        audience=API_AUDIENCE,
-        issuer=f"https://login.microsoftonline.com/{tid}/v2.0",
-        options={"verify_aud": True, "verify_exp": True},
-    )
+    try:
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=[key.get("alg", "RS256"), "RS256"],
+            audience=list(aud_set),
+            issuer=f"https://login.microsoftonline.com/{tid}/v2.0",
+            options={"verify_aud": True, "verify_exp": True},
+        )
+    except Exception as e:
+        # Helpful log for audience mismatches during connector setup
+        try:
+            got_aud = jwt.get_unverified_claims(token).get("aud")
+        except Exception:
+            got_aud = None
+        log.warning("audience_mismatch", extra={"expected": list(aud_set), "got": got_aud})
+        raise
 
     # Enforce scope
     scopes = (claims.get("scp") or "").split(" ")
@@ -140,41 +159,32 @@ async def validate_aad_bearer(auth_header: str) -> dict:
     )
 
     # ------------------------------------------------------------------
-    #  Optional: Tenant allowlist
+    # 🔒 Optional: Tenant allowlist (how to enable later)
     #
     # By default, this API accepts tokens from ANY Azure AD tenant
     # (multi-tenant setup). If you want to restrict which tenants
     # are allowed to call your API, you can enable the allowlist check.
     #
-    # 1. In Azure App Service → Configuration, set an environment variable:
+    # 1) In Azure App Service → Configuration (or .env), set:
     #       ALLOWED_TENANTS=<tenant-guid-1>,<tenant-guid-2>,...
     #
     #    Example:
     #       ALLOWED_TENANTS=11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222
     #
-    # 2. Uncomment the code below:
+    # 2) (Already active above) This code checks the tid against ALLOWED_TENANTS.
+    #    If not present, any tenant is accepted. If present, only those tenants work.
     #
-    #    allowed = os.getenv("ALLOWED_TENANTS", "")
-    #    if allowed and tid not in {t.strip() for t in allowed.split(",") if t.strip()}:
-    #        raise ValueError("Tenant not allowed")
+    # 3) Restart the API after adding/updating the env var.
     #
-    # 3. Restart the API after adding/updating the env var.
-    #
-    # 4. Behavior:
-    #    - If ALLOWED_TENANTS is empty → any AAD tenant is accepted.
-    #    - If ALLOWED_TENANTS has one or more tenant GUIDs → only those
-    #      tenants will be able to acquire a valid token for this API.
-    #
-    # This is useful if you want multi-tenant capability but still want
-    # to restrict early customers (e.g., pilot tenants) or production use
-    # to a fixed list of approved organizations.
+    # This is useful for piloting with specific customers before opening broadly.
     # ------------------------------------------------------------------
     return claims
 
+# ---------- FastAPI dependency wrapper (use in routes) ----------
 async def require_aad_token(request: Request):
     """
     FastAPI dependency wrapper around validate_aad_bearer.
-    Use this in your routes with Depends().
+    Use this in your routes with:  claims: dict = Depends(require_aad_token)
     """
     try:
         return await validate_aad_bearer(request.headers.get("Authorization"))

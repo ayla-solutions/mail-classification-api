@@ -115,6 +115,18 @@ def health():
         "auth": "delegated-obo",
     }
 
+@app.get("/Health")
+def health_alias():
+        return {
+        "ok": True,
+        "workers": WORKERS,
+        "log_level": LOG_LEVEL,
+        "slow_ms": {"graph": SLOW_GRAPH_MS, "dataverse": SLOW_DV_MS, "extractor": SLOW_EX_MS},
+        "preview_chars": PREVIEW_CHARS,
+        "auth": "delegated-obo",
+    }
+   
+@app.post("/mails")
 @app.get("/mails")
 def process_mails(authorization: str = Header(None)):
     """

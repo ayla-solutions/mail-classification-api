@@ -112,7 +112,6 @@ def _extract_html(html_bytes: bytes) -> str:
     except Exception as e:
         return f"[ERROR reading HTML: {e}]"
 
-
 # =========================
 # Public: single-attachment extraction
 # =========================
@@ -207,7 +206,7 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
 
     results = []
     for msg in data.get("value", []):
-        msg_id = msg["id"]
+        msg_id = msg["id"]s
 
         # (1) Full body
         body_html, body_text = _get_full_message_body(headers, msg_id)

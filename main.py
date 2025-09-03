@@ -153,11 +153,6 @@ def process_mails(authorization: str = Header(None)):
     t2 = time.perf_counter()
     mails = fetch_messages_with_attachments(graph_token)
     
-    log.info("graph_fetch_preview", extra={
-        "count": len(mails),
-        "scopes": claims.get("scp"),
-        "aud": claims.get("aud"),
-    })
     t3 = time.perf_counter()
     fetch_ms = int((t3 - t2) * 1000)
     fetched = len(mails)

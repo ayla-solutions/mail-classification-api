@@ -233,5 +233,5 @@ def process_mails(authorization: str = Header(None)):
         "phase1_created_or_skipped": created_or_skipped,
         "phase2_queued_enrichment": queued,
         "graph_fetch_ms": fetch_ms,
-        "details": details,
+        "details": details,  
     }

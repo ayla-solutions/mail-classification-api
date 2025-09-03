@@ -4,19 +4,6 @@ Mail Classification API (fully instrumented)
 /mails does two phases for each email:
   PHASE 1 (FAST, IDEMPOTENT): Minimal insert to Dataverse keyed by Graph message id (crabb_id)
   PHASE 2 (ASYNC): Background enrichment via Extractor API (LLM) → PATCH Dataverse
-
-This version adds:
-- JSON structured logging (via logging_setup.py already in your repo)
-- Per-request correlation (request_id) + per-mail correlation (graph_id)
-- Precise timings for every external call (Graph fetch, DV create, Extractor call, DV patch)
-- Payload previews (sizes + first N chars) without dumping sensitive full text
-- Slow-step warnings with thresholds controlled via env
-- Safer, richer /health endpoint
-- FIX: Pass `subject` and `received_at` to the worker (for ticket numbers & summaries)
-
-NEW (2025-08-31):
-- Delegated Graph (On-Behalf-Of): accept user's bearer from Custom Connector and exchange for Graph delegated token.
-- Switch Graph calls to /me (no hard-coded mailbox).
 """
 
 import os
@@ -25,10 +12,9 @@ import uuid
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any
-from fastapi import Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-
 from fastapi import FastAPI, Request, Response, Header, HTTPException
+from fastapi.security import HTTPBearer
+import jwt
 
 from logging_setup import init_logging, set_request_id, set_graph_id
 from utils.auth_obo import get_graph_token_obo
@@ -51,17 +37,22 @@ LOG_LEVEL     = os.getenv("LOG_LEVEL", "INFO").upper()
 _executor = ThreadPoolExecutor(max_workers=WORKERS)
 app = FastAPI(title="Mail Classification API (instrumented)")
 bearer_security = HTTPBearer(auto_error=False)
+
 # ------------------------------------------------------------------------------
 
 def _preview(s: str | None, lim: int = PREVIEW_CHARS) -> Dict[str, Any]:
-    """
-    Return a small safe summary of a potentially long/sensitive string.
-    Logs length and a short prefix only.
-    """
+    """Return safe preview for logs: length + short prefix only."""
     if not s:
         return {"len": 0, "preview": ""}
     s = s.strip()
     return {"len": len(s), "preview": s[:lim] + ("…" if len(s) > lim else "")}
+
+def _peek_claims(bearer: str) -> dict:
+    try:
+        token = bearer.split(" ", 1)[1]
+        return jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
+    except Exception:
+        return {}
 
 # ------------------------------------------------------------------------------
 
@@ -117,37 +108,39 @@ def health():
 
 @app.get("/Health")
 def health_alias():
-        return {
-        "ok": True,
-        "workers": WORKERS,
-        "log_level": LOG_LEVEL,
-        "slow_ms": {"graph": SLOW_GRAPH_MS, "dataverse": SLOW_DV_MS, "extractor": SLOW_EX_MS},
-        "preview_chars": PREVIEW_CHARS,
-        "auth": "delegated-obo",
-    }
-   
+    return health()
+
+# ------------------------------------------------------------------------------
+
 @app.post("/mails")
-@app.get("/mails")
 def process_mails(authorization: str = Header(None)):
     """
     Fetch mails (+ attachments), Phase-1 insert, Phase-2 queue enrichment.
     Uses delegated Graph token via OBO (no mailbox param needed).
     """
+    # ---- 1) Validate incoming bearer ----
+    if not authorization or not authorization.lower().startswith("bearer "):
+        log.info("no_bearer_header")
+        raise HTTPException(status_code=401, detail="Missing bearer token from connector")
+
+    claims = _peek_claims(authorization)
+    log.info("incoming_token", extra={"kv": {
+        "aud": claims.get("aud"),
+        "scp": claims.get("scp"),
+        "tid": claims.get("tid"),
+        "azp": claims.get("azp"),
+    }})
+
     req_id = uuid.uuid4().hex
     set_request_id(req_id)
 
-    # ---- 1) Require user's bearer from the Custom Connector (OAuth 2.0) ----
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token from connector")
     user_token = authorization.split(" ", 1)[1].strip()
 
     # ---- 2) Exchange for Graph delegated token (OBO) ----
     t0 = time.perf_counter()
-    graph_token = get_graph_token_obo(user_token)
     try:
-        graph_token = get_graph_token_obo(user_token)  # now raises RuntimeError with clear message
+        graph_token = get_graph_token_obo(user_token)
     except RuntimeError as e:
-        # Turn all OBO/config problems into a clean 401 instead of crashing the process
         log.error("obo_error", extra={"request_id": req_id, "error": str(e)})
         raise HTTPException(status_code=401, detail=str(e))
     t1 = time.perf_counter()
@@ -158,16 +151,15 @@ def process_mails(authorization: str = Header(None)):
 
     # ---- 3) Fetch messages for the signed-in user (/me) ----
     t2 = time.perf_counter()
-    mails = fetch_messages_with_attachments(graph_token)  # now uses /me paths
+    mails = fetch_messages_with_attachments(graph_token)
     t3 = time.perf_counter()
     fetch_ms = int((t3 - t2) * 1000)
     fetched = len(mails)
-    log.info(
-        "graph_fetch_messages_done",
-        extra={"elapsed_ms": fetch_ms, "request_id": req_id, "count": fetched},
-    )
+    log.info("graph_fetch_messages_done",
+             extra={"elapsed_ms": fetch_ms, "request_id": req_id, "count": fetched})
     if fetch_ms > SLOW_GRAPH_MS:
-        log.warning("slow_graph_fetch", extra={"elapsed_ms": fetch_ms, "request_id": req_id, "count": fetched})
+        log.warning("slow_graph_fetch",
+                    extra={"elapsed_ms": fetch_ms, "request_id": req_id, "count": fetched})
 
     created_or_skipped = 0
     queued = 0
@@ -175,8 +167,8 @@ def process_mails(authorization: str = Header(None)):
 
     # ---- 4) Phase 1 + queue Phase 2 per message ----
     for m in mails:
-        mid   = m.get("id")
-        subj  = (m.get("subject") or "")[:120]
+        mid = m.get("id")
+        subj = (m.get("subject") or "")[:120]
         set_graph_id(mid)
         log.info("mail_begin", extra={"kv": {"graph_id": mid, "subject": subj}})
 
@@ -213,35 +205,23 @@ def process_mails(authorization: str = Header(None)):
         log.info("enrichment_queued", extra={
             "kv": {
                 "graph_id": mid,
-                "body_text": {
-                    "len": len(str(body_preview or "")),
-                    "preview": str(body_preview or "")[:140] + (
-                        "…" if body_preview and len(str(body_preview)) > 140 else ""
-                    ),
-                },
-                "attachment_text": {
-                    "len": len(str(att_preview or "")),
-                    "preview": str(att_preview or "")[:140] + (
-                        "…" if att_preview and len(str(att_preview)) > 140 else ""
-                    ),
-                },
+                "body_text": body_preview,
+                "attachment_text": att_preview,
                 "attachments_count": len(m.get("attachments") or []),
                 "attachment_methods": m.get("attachment_methods") or [],
             }
         })
 
-        details.append(
-            {
-                "graph_id": mid,
-                "subject": subj,
-                "body_text": body_preview,
-                "attachment_text": att_preview,
-                "attachments_count": len(m.get("attachments") or []),
-                "attachment_methods": m.get("attachment_methods") or [],
-                "created_or_skipped": phase1_ok,
-                "dv_create_ms": c_ms,
-            }
-        )
+        details.append({
+            "graph_id": mid,
+            "subject": subj,
+            "body_text": body_preview,
+            "attachment_text": att_preview,
+            "attachments_count": len(m.get("attachments") or []),
+            "attachment_methods": m.get("attachment_methods") or [],
+            "created_or_skipped": phase1_ok,
+            "dv_create_ms": c_ms,
+        })
 
         set_graph_id(None)
 

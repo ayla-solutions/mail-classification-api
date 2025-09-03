@@ -191,6 +191,12 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
       body_preview, mail_body_html, mail_body_text,
       attachments (names), attachment_methods, attachment_text
     """
+
+    log.info("graph_fetch_preview", extra={
+    "count": len(mails),
+    "scopes": claims.get("scp"),
+    "aud": claims.get("aud"),
+})
     headers = {"Authorization": f"Bearer {token}"}
     TOP_N = int(os.getenv("GRAPH_MAIL_TOP", "10"))
 

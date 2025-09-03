@@ -12,11 +12,10 @@ import uuid
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any
-from fastapi import FastAPI, Request, Response, Header, HTTPException
-from fastapi.security import HTTPBearer
-import jwt
+from fastapi import FastAPI, Request, Response, Header, HTTPException, Depends
 
 from logging_setup import init_logging, set_request_id, set_graph_id
+from utils.auth import require_aad_token           # <-- validated, multi-tenant JWT dependency
 from utils.auth_obo import get_graph_token_obo
 from utils.extract_attachments import fetch_messages_with_attachments
 from utils.dataverse import create_basic_email_row
@@ -36,7 +35,6 @@ LOG_LEVEL     = os.getenv("LOG_LEVEL", "INFO").upper()
 
 _executor = ThreadPoolExecutor(max_workers=WORKERS)
 app = FastAPI(title="Mail Classification API (instrumented)")
-bearer_security = HTTPBearer(auto_error=False)
 
 # ------------------------------------------------------------------------------
 
@@ -46,13 +44,6 @@ def _preview(s: str | None, lim: int = PREVIEW_CHARS) -> Dict[str, Any]:
         return {"len": 0, "preview": ""}
     s = s.strip()
     return {"len": len(s), "preview": s[:lim] + ("…" if len(s) > lim else "")}
-
-def _peek_claims(bearer: str) -> dict:
-    try:
-        token = bearer.split(" ", 1)[1]
-        return jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
-    except Exception:
-        return {}
 
 # ------------------------------------------------------------------------------
 
@@ -116,7 +107,7 @@ def health():
         "log_level": LOG_LEVEL,
         "slow_ms": {"graph": SLOW_GRAPH_MS, "dataverse": SLOW_DV_MS, "extractor": SLOW_EX_MS},
         "preview_chars": PREVIEW_CHARS,
-        "auth": "delegated-obo",
+        "auth": "delegated-obo + AAD multi-tenant JWT validation",
     }
 
 @app.get("/Health")
@@ -126,23 +117,29 @@ def health_alias():
 # ------------------------------------------------------------------------------
 
 @app.post("/mails")
-def process_mails(authorization: str = Header(None)):
+def process_mails(
+    authorization: str = Header(None),
+    claims: dict = Depends(require_aad_token),   # <-- enforce valid AAD token (aud/scope/issuer)
+):
     """
     Fetch mails (+ attachments), Phase-1 insert, Phase-2 queue enrichment.
     Uses delegated Graph token via OBO (no mailbox param needed).
     """
-    # ---- 1) Validate incoming bearer ----
-    if not authorization or not authorization.lower().startswith("bearer "):
-        log.info("no_bearer_header")
-        raise HTTPException(status_code=401, detail="Missing bearer token from connector")
 
-    claims = _peek_claims(authorization)
-    log.info("incoming_token", extra={"kv": {
-        "aud": claims.get("aud"),
-        "scp": claims.get("scp"),
+    # ---- 1) We already validated the bearer via require_aad_token ----
+    # Log minimal caller identity for audit
+    log.info("caller_validated", extra={"kv": {
         "tid": claims.get("tid"),
+        "oid": claims.get("oid"),
+        "scp": claims.get("scp"),
+        "aud": claims.get("aud"),
         "azp": claims.get("azp"),
     }})
+
+    if not authorization or not authorization.lower().startswith("bearer "):
+        # Should not happen because require_aad_token checked it, but keep a guard
+        log.info("no_bearer_header_after_validation")
+        raise HTTPException(status_code=401, detail="Missing bearer token from connector")
 
     req_id = uuid.uuid4().hex
     set_request_id(req_id)
@@ -165,7 +162,7 @@ def process_mails(authorization: str = Header(None)):
     # ---- 3) Fetch messages for the signed-in user (/me) ----
     t2 = time.perf_counter()
     mails = fetch_messages_with_attachments(graph_token)
-    
+
     t3 = time.perf_counter()
     fetch_ms = int((t3 - t2) * 1000)
     fetched = len(mails)
@@ -246,5 +243,5 @@ def process_mails(authorization: str = Header(None)):
         "phase1_created_or_skipped": created_or_skipped,
         "phase2_queued_enrichment": queued,
         "graph_fetch_ms": fetch_ms,
-        "details": details,  
+        "details": details,
     }

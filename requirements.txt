@@ -17,3 +17,6 @@ lxml
 python-json-logger
 msal==1.28.0
 pyjwt==2.9.0
+python-jose[cryptography]==3.3.0
+httpx==0.27.2
+cachetools==5.4.0

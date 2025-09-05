@@ -1,17 +1,17 @@
 """
-Mail Classification API (fully instrumented)
---------------------------------------------
-/mails does two phases for each email:
-  PHASE 1 (FAST, IDEMPOTENT): Minimal insert to Dataverse keyed by Graph message id (crabb_id)
-  PHASE 2 (ASYNC): Background enrichment via Extractor API (LLM) → PATCH Dataverse
+    Mail Classification API (fully instrumented)
+    --------------------------------------------
+    /mails does two phases for each email:
+      PHASE 1 (FAST, IDEMPOTENT): Minimal insert to Dataverse keyed by Graph message id (crabb_id)
+      PHASE 2 (ASYNC): Background enrichment via Extractor API (LLM) → PATCH Dataverse
 """
-
 import os
 import time
 import uuid
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any
+
 from fastapi import FastAPI, Request, Response, Header, HTTPException, Depends
 
 from logging_setup import init_logging, set_request_id, set_graph_id
@@ -19,10 +19,9 @@ from utils.auth import require_aad_token           # <-- validated, multi-tenant
 from utils.auth_obo import get_graph_token_obo
 from utils.extract_attachments import fetch_messages_with_attachments
 from utils.dataverse import create_basic_email_row
-from utils.extractor_worker import enrich_and_patch_dataverse
+from utils.extractor_worker import enrich_and_patch_dataverse, set_total_mails
 
 # ------------------------------------------------------------------------------
-
 init_logging()
 log = logging.getLogger("main")
 
@@ -37,7 +36,6 @@ _executor = ThreadPoolExecutor(max_workers=WORKERS)
 app = FastAPI(title="Mail Classification API (instrumented)")
 
 # ------------------------------------------------------------------------------
-
 def _preview(s: str | None, lim: int = PREVIEW_CHARS) -> Dict[str, Any]:
     """Return safe preview for logs: length + short prefix only."""
     if not s:
@@ -46,19 +44,17 @@ def _preview(s: str | None, lim: int = PREVIEW_CHARS) -> Dict[str, Any]:
     return {"len": len(s), "preview": s[:lim] + ("…" if len(s) > lim else "")}
 
 # ------------------------------------------------------------------------------
-
 # main.py
 if __name__ == "__main__":
     from logging_setup import setup_logging
     setup_logging()
-    import uvicorn, os
+    import uvicorn
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8000")),
         access_log=True,              # make sure this is True
     )
-
 
 @app.middleware("http")
 async def add_request_context(request: Request, call_next):
@@ -94,7 +90,6 @@ async def add_request_context(request: Request, call_next):
         set_request_id(None)
 
 # ------------------------------------------------------------------------------
-
 @app.get("/")
 def root():
     return {"message": "Mail Classification API is running (instrumented)"}
@@ -115,7 +110,6 @@ def health_alias():
     return health()
 
 # ------------------------------------------------------------------------------
-
 @app.post("/mails")
 def process_mails(
     authorization: str = Header(None),
@@ -125,7 +119,6 @@ def process_mails(
     Fetch mails (+ attachments), Phase-1 insert, Phase-2 queue enrichment.
     Uses delegated Graph token via OBO (no mailbox param needed).
     """
-
     # ---- 1) We already validated the bearer via require_aad_token ----
     # Log minimal caller identity for audit
     log.info("caller_validated", extra={"kv": {
@@ -171,6 +164,9 @@ def process_mails(
     if fetch_ms > SLOW_GRAPH_MS:
         log.warning("slow_graph_fetch",
                     extra={"elapsed_ms": fetch_ms, "request_id": req_id, "count": fetched})
+
+    # Inform the worker about the total number of mails for progress tracking
+    set_total_mails(fetched)
 
     created_or_skipped = 0
     queued = 0

@@ -1,8 +1,13 @@
 # Outlook Mail Classifier API
 
-This FastAPI project connects to a mailbox using Microsoft Graph API, processes emails and attachments, classifies them, and pushes structured data into a Dataverse table.
+## Project Overview
+The Outlook Mail Classifier API is a FastAPI-based application that:
 
-The API is hosted in Azure client and is connected to this GitHub repo. Everytime a change is made to this repo, the API rebuilds itself.
+- Connects to a mailbox using the Microsoft Graph API to fetch emails and their attachments.
+- Processes and classifies emails based on their content (subject, body, metadata) using rule-based logic.
+- Extracts text from email bodies and attachments.
+- Stores the processed data in a Dataverse table for further use.
+- Is containerized using Docker and deployed on Azure, with automatic rebuilding triggered by changes to the linked GitHub repository.
 
 ## API access Links
 
@@ -17,19 +22,21 @@ The API is hosted in Azure client and is connected to this GitHub repo. Everytim
 ```
 
 MAIL-CLASSIFICATION-API/
-│
 ├── utils/
-│ ├── auth.py                   # Handles Azure AD authentication
-│ ├── classify.py               # Rule-based classification logic (category & priority)
-│ ├── dataverse.py              # Dataverse API push logic
-│ └── extract_attachments.py    # Extracts text from attachments and body
-│
-├── .env                        # Environment variables 
-├── Dockerfile                  # Docker configuration
-├── main.py                     # FastAPI app entry point
-├── requirements.txt            # Python dependencies
-├── run_mail_api.bat            # One-click script to rebuild and run the API
-└── readme.md                   # 📖 You're reading this!
+│   ├── auth.py                   # Azure AD JWT validation + app-only Graph token
+│   ├── auth_obo.py               # OBO token exchange for delegated Graph access
+│   ├── classify.py               # Rule-based keyword classification (fallback)
+│   ├── dataverse.py              # Dataverse CRUD (create minimal row, patch enrichment)
+│   ├── extract_attachments.py    # Graph email/attachment fetching + text extraction (with OCR)
+│   ├── extractor_client.py       # Resilient client for external LLM extractor API
+│   └── extractor_worker.py       # Phase 2 background worker (enrichment + patching)
+├── .env                          # Credentials, URLs, timeouts
+├── Dockerfile                    # Python 3.10 base with OCR/PDF deps
+├── main.py                       # FastAPI entry, endpoints, middleware, Phase 1 orchestration
+├── requirements.txt              # Dependencies (FastAPI, MSAL, extraction libs)
+├── logging_setup.py              # Structured logging (JSON/human, context vars)
+├── run_mail_api.bat              # Windows Docker rebuild/run script
+└── readme.md                     # Overview, setup, endpoints
 ```
 
 ---

@@ -200,8 +200,9 @@ def fetch_messages_with_attachments(token: str, since_days: int = None) -> list[
 
     # Apply date filter if since_days is set
     if since_days:
-        since = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat(timespec="seconds")
-        url = f"{base_url}?$top={TOP_N}&{select}&{order}&$filter=receivedDateTime ge {since}"
+        since = (datetime.now(timezone.utc) - timedelta(days=since_days))
+        since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")  # <-- FIX: Graph requires Zulu time
+        url = f"{base_url}?$top={TOP_N}&{select}&{order}&$filter=receivedDateTime ge {since_str}"
     else:
         url = f"{base_url}?$top={TOP_N}&{select}&{order}"
 

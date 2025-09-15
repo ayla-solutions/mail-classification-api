@@ -25,6 +25,7 @@ import pytesseract
 import pandas as pd
 from docx import Document
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta, timezone
 
 # =========================
 # HTML → plain text
@@ -182,7 +183,7 @@ def _get_full_message_body(headers: dict, msg_id: str) -> tuple[str, str]:
 # =========================
 # Public: fetch messages with bodies & attachments (delegated /me)
 # =========================
-def fetch_messages_with_attachments(token: str) -> list[dict]:
+def fetch_messages_with_attachments(token: str, since_days: int = None) -> list[dict]:
     """
     Returns list of mail dicts with:
       id, sender, received_from, subject, received_at,
@@ -193,12 +194,16 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}"}
     TOP_N = int(os.getenv("GRAPH_MAIL_TOP", "10"))
 
-    url = (
-        "https://graph.microsoft.com/v1.0/me/messages"
-        f"?$top={TOP_N}"
-        "&$select=id,subject,from,receivedDateTime,bodyPreview"
-        "&$orderby=receivedDateTime desc"
-    )
+    base_url = "https://graph.microsoft.com/v1.0/me/messages"
+    select = "$select=id,subject,from,receivedDateTime,bodyPreview"
+    order  = "$orderby=receivedDateTime desc"
+
+    # Apply date filter if since_days is set
+    if since_days:
+        since = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat(timespec="seconds")
+        url = f"{base_url}?$top={TOP_N}&{select}&{order}&$filter=receivedDateTime ge {since}"
+    else:
+        url = f"{base_url}?$top={TOP_N}&{select}&{order}"
 
     res = requests.get(url, headers=headers)
     res.raise_for_status()
@@ -245,8 +250,7 @@ def fetch_messages_with_attachments(token: str) -> list[dict]:
             "subject": msg.get("subject"),
             "received_at": msg.get("receivedDateTime"),
             "body_preview": msg.get("bodyPreview") or "",
-            "mail_body_html": body_html,
-            "mail_body_text": body_text,
+            "mail_body": msg.get("body", {}).get("content", ""),
             "attachments": attachment_names,
             "attachment_methods": methods,
             "attachment_text": "\n\n".join(extracted_content),

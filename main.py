@@ -31,6 +31,7 @@ SLOW_DV_MS    = int(os.getenv("SLOW_DV_MS", "3000"))
 SLOW_EX_MS    = int(os.getenv("SLOW_EX_MS", "8000"))
 PREVIEW_CHARS = int(os.getenv("LOG_PREVIEW_CHARS", "280"))
 LOG_LEVEL     = os.getenv("LOG_LEVEL", "INFO").upper()
+MAIL_SINCE_DAYS = int(os.getenv("MAIL_SINCE_DAYS", "7"))
 
 _executor = ThreadPoolExecutor(max_workers=WORKERS)
 app = FastAPI(title="Mail Classification API (instrumented)")
@@ -154,7 +155,7 @@ def process_mails(
 
     # ---- 3) Fetch messages for the signed-in user (/me) ----
     t2 = time.perf_counter()
-    mails = fetch_messages_with_attachments(graph_token)
+    mails = fetch_messages_with_attachments(graph_token, since_days=MAIL_SINCE_DAYS)
 
     t3 = time.perf_counter()
     fetch_ms = int((t3 - t2) * 1000)

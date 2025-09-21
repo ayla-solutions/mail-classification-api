@@ -1,18 +1,24 @@
-FROM python:3.11-slim
+# Mail Classifier API
+FROM python:3.10-slim
 
-# Set working directory
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# System deps for OCR / PDF
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    tesseract-ocr poppler-utils fonts-dejavu-core \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Install dependencies first to leverage Docker cache
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY mail_classification_api ./mail_classification_api
+COPY . .
 
-# The API listens on port 8000 by default
 EXPOSE 8000
 
-# Entry point launches Uvicorn with the unified API
-CMD ["uvicorn", "mail_classification_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# LOG_LEVEL can be INFO|DEBUG; SERVICE_NAME helps identify the app in logs
+ENV SERVICE_NAME="mail-classifier"
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,54 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+*.egg
+*.manifest
+*.spec
+
+
+# ---- IDE / Editors ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- Logs ----
+*.log
+logs/
+*.out
+*.err
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Tests & Coverage ----
+.coverage
+.tox/
+pytest_cache/
+htmlcov/
+
+# ---- Build / Packaging ----
+dist/
+build/
+*.whl
+
+# ---- Docker ----
+*.pid
+*.seed
+*.pid.lock
+.dockerignore
+docker-compose.override.yml
+
+# ---- Azure ----
+# Deployment artifacts & local settings
+.scm/
+.azure/
+logfiles/
+bin/
+obj/
